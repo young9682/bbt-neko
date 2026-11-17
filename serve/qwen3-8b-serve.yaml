@@ -74,7 +74,12 @@ spec:
               nvidia.com/gpu: "2"
           volumeMounts:
           - { mountPath: /workspace, name: ws }
+          - { mountPath: /dev/shm, name: dshm }
         volumes:
         - name: ws
           persistentVolumeClaim:
             claimName: young86-workspace
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
