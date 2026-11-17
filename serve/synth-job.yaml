@@ -1,18 +1,16 @@
 # 猫娘数据合成 VolcanoJob：单卡起 vLLM(Qwen3-8B) → 合成 → judge 过滤，一气呵成
+# 注意：跑这个 job 前需要 PVC 里有 /workspace/repos/bbt-neko（git clone）和 venv neko-synth
 #
-# 使用前改两处占位符：
-#   REPLACE      → 你的导师 NS uid（队列名 advisor-<uid>-gpu）
-#   workspace-pvc→ 你实际的 PVC 名
-#
-# 时限对策：nvidia 队列有 1h 硬时限。synth/judge 两个脚本都支持断点续跑，
-# 超时被杀后 Volcano maxRetry 会重建 Pod，脚本自动从断点继续（vLLM 重启约 3~5 分钟）。
+# 时限对策：synth/judge 两个脚本都支持断点续跑，
+# 被杀后 Volcano maxRetry 会重建 Pod，脚本自动从断点继续（vLLM 重启约 3~5 分钟）。
 apiVersion: batch.volcano.sh/v1alpha1
 kind: Job
 metadata:
   name: neko-synth-v1
+  namespace: advisor-young86
 spec:
   minAvailable: 1
-  queue: advisor-REPLACE-gpu
+  queue: advisor-young86-gpu
   tasks:
   - replicas: 1
     name: synth
@@ -64,4 +62,4 @@ spec:
         volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: workspace-pvc
+            claimName: young86-workspace

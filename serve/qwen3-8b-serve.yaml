@@ -1,0 +1,80 @@
+# Qwen3-8B 自部署服务（合成 + 联调共用）：vLLM TP=2 起在 advisor-young86 NS
+# 模式照抄已验证的 sv-emo-web：队列 advisor-young86-gpu + 5090 节点 + NGC 镜像 + young86-workspace PVC
+#
+# 首次启动流程（幂等，Pod 重启自动跳过已完成步骤）：
+#   1. PVC 上建 neko-synth venv（uv + 清华源）装 vllm/modelscope
+#   2. ModelScope 直连拉 Qwen3-8B（~17GB）到 /workspace/datasets/Qwen3-8B
+#   3. vLLM serve 张量并行 2 卡，served-model-name=qwen3-8b，端口 8000
+apiVersion: batch.volcano.sh/v1alpha1
+kind: Job
+metadata:
+  name: neko-qwen3-serve
+  namespace: advisor-young86
+spec:
+  maxRetry: 3
+  minAvailable: 1
+  queue: advisor-young86-gpu
+  schedulerName: volcano
+  tasks:
+  - name: serve
+    replicas: 1
+    template:
+      metadata:
+        labels:
+          app: neko-synth
+      spec:
+        restartPolicy: Always
+        nodeSelector:
+          nvidia.com/gpu.product: NVIDIA-GeForce-RTX-5090
+        containers:
+        - name: serve
+          image: nvcr.io/nvidia/pytorch:26.04-py3
+          command: ["bash", "-c"]
+          args:
+          - |
+            export PYTHONUNBUFFERED=1
+            export NCCL_P2P_DISABLE=1
+            export NCCL_IB_DISABLE=1
+            export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+            export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+            set -e
+            df -h /workspace | tail -1
+
+            if [ ! -x /workspace/venvs/neko-synth/bin/python ]; then
+              echo "[setup] 首次运行：创建 venv 并安装 vllm/modelscope（约 5~10 分钟）"
+              pip install -q uv -i https://pypi.tuna.tsinghua.edu.cn/simple
+              uv venv /workspace/venvs/neko-synth --python "$(command -v python3)"
+              source /workspace/venvs/neko-synth/bin/activate
+              uv pip install vllm modelscope openai
+            else
+              echo "[setup] 复用已有 venv"
+              source /workspace/venvs/neko-synth/bin/activate
+            fi
+
+            if [ ! -f /workspace/datasets/Qwen3-8B/config.json ]; then
+              echo "[setup] 从 ModelScope 拉取 Qwen3-8B（~17GB）"
+              modelscope download --model Qwen/Qwen3-8B --local_dir /workspace/datasets/Qwen3-8B
+            else
+              echo "[setup] 模型已存在，跳过下载"
+            fi
+
+            echo "[serve] vLLM TP=2 启动"
+            exec vllm serve /workspace/datasets/Qwen3-8B \
+              --served-model-name qwen3-8b \
+              --tensor-parallel-size 2 \
+              --port 8000 \
+              --gpu-memory-utilization 0.90 \
+              --max-model-len 8192
+          env:
+          - { name: PYTHONUNBUFFERED, value: "1" }
+          resources:
+            limits:
+              cpu: "12"
+              memory: 56Gi
+              nvidia.com/gpu: "2"
+          volumeMounts:
+          - { mountPath: /workspace, name: ws }
+        volumes:
+        - name: ws
+          persistentVolumeClaim:
+            claimName: young86-workspace

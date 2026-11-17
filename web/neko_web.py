@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PERSONA_MD = ROOT / "persona" / "neko.md"
 LOG_FILE = ROOT / "data" / "raw" / "web_chat_log.jsonl"
 
-CFG = {"base_url": "", "model": "", "api_key": "", "mock": False}
+CFG = {"base_url": "", "model": "", "api_key": "", "mock": False, "nothink": False}
 
 MOCK_REPLIES = [
     "喵？主人在叫我~（我是 MOCK 占位回复：用 --base-url / --api-key 接上真实后端，咪露才会真正开嗓喵）",
@@ -56,6 +56,9 @@ def call_upstream(messages: list) -> str:
         "temperature": 0.8,
         "max_tokens": 1024,
     }
+    if CFG["nothink"]:
+        # Qwen3 系：关闭思考模式（自部署 vLLM / ModelScope API 均支持）
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -261,9 +264,11 @@ def main():
     ap.add_argument("--model", default="", help="模型名，如 glm-4-flash / deepseek-chat")
     ap.add_argument("--api-key", default=os.environ.get("NEKO_API_KEY", ""))
     ap.add_argument("--mock", action="store_true", help="不接后端，用占位回复验证 UI")
+    ap.add_argument("--nothink", action="store_true", help="Qwen3 系后端关闭思考模式")
     args = ap.parse_args()
 
-    CFG.update(base_url=args.base_url, model=args.model, api_key=args.api_key, mock=args.mock)
+    CFG.update(base_url=args.base_url, model=args.model, api_key=args.api_key,
+               mock=args.mock, nothink=args.nothink)
     if not args.mock and (not args.base_url or not args.model):
         print("[cfg] 未配置后端！用 --mock 先看 UI，或加上：\n"
               "      --base-url https://open.bigmodel.cn/api/paas/v4 --model glm-4-flash --api-key <KEY>\n"

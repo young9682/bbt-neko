@@ -1,18 +1,15 @@
 # 猫娘 LoRA 训练 VolcanoJob：单卡跑 train/run_sft.sh
 #
-# 使用前改两处占位符（与 serve/synth-job.yaml 相同）：
-#   REPLACE       → 你的导师 NS uid
-#   workspace-pvc → 你实际的 PVC 名
-#
-# 时限对策：1h 硬时限到点被杀 → maxRetry 重建 Pod → run_sft.sh 自动从最新
+# 时限对策：到点被杀 → maxRetry 重建 Pod → run_sft.sh 自动从最新
 # checkpoint 续跑，循环往复直到训完（TaskCompleted → CompleteJob）。
 apiVersion: batch.volcano.sh/v1alpha1
 kind: Job
 metadata:
   name: neko-sft-v1
+  namespace: advisor-young86
 spec:
   minAvailable: 1
-  queue: advisor-REPLACE-gpu
+  queue: advisor-young86-gpu
   tasks:
   - replicas: 1
     name: train
@@ -39,4 +36,4 @@ spec:
         volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: workspace-pvc
+            claimName: young86-workspace
