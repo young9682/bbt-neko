@@ -1,0 +1,67 @@
+# 猫娘数据合成 VolcanoJob：单卡起 vLLM(Qwen3-8B) → 合成 → judge 过滤，一气呵成
+#
+# 使用前改两处占位符：
+#   REPLACE      → 你的导师 NS uid（队列名 advisor-<uid>-gpu）
+#   workspace-pvc→ 你实际的 PVC 名
+#
+# 时限对策：nvidia 队列有 1h 硬时限。synth/judge 两个脚本都支持断点续跑，
+# 超时被杀后 Volcano maxRetry 会重建 Pod，脚本自动从断点继续（vLLM 重启约 3~5 分钟）。
+apiVersion: batch.volcano.sh/v1alpha1
+kind: Job
+metadata:
+  name: neko-synth-v1
+spec:
+  minAvailable: 1
+  queue: advisor-REPLACE-gpu
+  tasks:
+  - replicas: 1
+    name: synth
+    policies:
+    - { event: TaskCompleted, action: CompleteJob }
+    maxRetry: 3
+    template:
+      spec:
+        restartPolicy: OnFailure
+        containers:
+        - name: synth
+          image: nvcr.io/nvidia/pytorch:26.04-py3
+          workingDir: /workspace/repos/bbt-neko
+          command: ["bash", "-c"]
+          args:
+          - |
+            set -e
+            source /workspace/venvs/neko-synth/bin/activate
+            cd /workspace/repos/bbt-neko
+
+            echo "[job] starting vLLM..."
+            vllm serve /workspace/datasets/Qwen3-8B \
+              --port 8000 \
+              --gpu-memory-utilization 0.90 \
+              --max-model-len 8192 &
+            VLLM_PID=$!
+            trap 'kill $VLLM_PID 2>/dev/null || true' EXIT
+
+            ok=0
+            for i in $(seq 1 60); do
+              if curl -sf http://localhost:8000/health >/dev/null; then ok=1; break; fi
+              sleep 10
+            done
+            [ "$ok" = "1" ] || { echo "[job] vLLM failed to start in 10min"; exit 1; }
+            echo "[job] vLLM ready"
+
+            # 1200 任务 × 每任务 2 条 ≈ 2400 条原始对话，断点续跑
+            python data/scripts/synth.py --base-url http://localhost:8000 --total 1200
+            python data/scripts/judge.py --base-url http://localhost:8000
+            echo "[job] synth pipeline done"
+          env:
+          - { name: PYTHONUNBUFFERED, value: "1" }
+          - { name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True" }
+          resources:
+            requests: { nvidia.com/gpu: "1", memory: "48Gi" }
+            limits:   { nvidia.com/gpu: "1", memory: "48Gi" }
+          volumeMounts:
+          - { name: workspace, mountPath: /workspace }
+        volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: workspace-pvc

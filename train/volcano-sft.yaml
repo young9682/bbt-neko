@@ -1,0 +1,42 @@
+# 猫娘 LoRA 训练 VolcanoJob：单卡跑 train/run_sft.sh
+#
+# 使用前改两处占位符（与 serve/synth-job.yaml 相同）：
+#   REPLACE       → 你的导师 NS uid
+#   workspace-pvc → 你实际的 PVC 名
+#
+# 时限对策：1h 硬时限到点被杀 → maxRetry 重建 Pod → run_sft.sh 自动从最新
+# checkpoint 续跑，循环往复直到训完（TaskCompleted → CompleteJob）。
+apiVersion: batch.volcano.sh/v1alpha1
+kind: Job
+metadata:
+  name: neko-sft-v1
+spec:
+  minAvailable: 1
+  queue: advisor-REPLACE-gpu
+  tasks:
+  - replicas: 1
+    name: train
+    policies:
+    - { event: TaskCompleted, action: CompleteJob }
+    maxRetry: 3
+    template:
+      spec:
+        restartPolicy: OnFailure
+        containers:
+        - name: train
+          image: nvcr.io/nvidia/pytorch:26.04-py3
+          workingDir: /workspace/repos/bbt-neko
+          command: ["bash", "-c"]
+          args: ["bash train/run_sft.sh"]
+          env:
+          - { name: PYTHONUNBUFFERED, value: "1" }
+          - { name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True" }
+          resources:
+            requests: { nvidia.com/gpu: "1", memory: "48Gi" }
+            limits:   { nvidia.com/gpu: "1", memory: "48Gi" }
+          volumeMounts:
+          - { name: workspace, mountPath: /workspace }
+        volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: workspace-pvc
